@@ -1,0 +1,49 @@
+name: LLM Smoke
+
+on:
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Test Responses endpoint
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_BASE_URL: ${{ vars.LLM_OPENAI_BASE_URL }}
+          OPENAI_MODEL: ${{ vars.LLM_OPENAI_MODELS }}
+        run: |
+          set +x
+          python - <<'PY'
+          import json
+          import os
+          import urllib.error
+          import urllib.request
+
+          base = os.environ["OPENAI_BASE_URL"].rstrip("/")
+          key = os.environ["OPENAI_API_KEY"]
+          model = os.environ["OPENAI_MODEL"].split(",")[0].strip()
+          headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+
+          models_req = urllib.request.Request(f"{base}/models", headers=headers)
+          with urllib.request.urlopen(models_req, timeout=20) as response:
+              model_ids = [item.get("id") for item in json.load(response).get("data", [])]
+          print(f"models_ok=true model_present={model in model_ids} model_count={len(model_ids)}")
+
+          payload = json.dumps({
+              "model": model,
+              "input": "Reply with exactly OK.",
+              "max_output_tokens": 64,
+              "stream": False,
+          }).encode()
+          request = urllib.request.Request(f"{base}/responses", data=payload, headers=headers)
+          try:
+              with urllib.request.urlopen(request, timeout=120) as response:
+                  data = json.load(response)
+              print(f"responses_ok=true status={data.get('status', 'unknown')} id_present={bool(data.get('id'))}")
+          except urllib.error.HTTPError as error:
+              body = error.read().decode("utf-8", errors="replace")[:1000]
+              print(f"responses_ok=false http_status={error.code} body={body}")
+              raise
+          PY
